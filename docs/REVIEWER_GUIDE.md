@@ -1,6 +1,6 @@
 # Reviewer guide
 
-**[Watch the 66-second browser recording](media/operational-walkthrough.mp4)**: an operator proposes, is denied approval, a separate reviewer approves, and the redacted audit journal is inspected. Captions explain the steps; no live account or personal data is used.
+**[Watch the 71-second browser recording](media/operational-walkthrough.mp4)**: an operator proposes, is denied approval, a separate reviewer approves, and the redacted audit journal is inspected. Captions explain the steps; no live account or personal data is used.
 
 **[Start with the security implementation map](SECURITY.md#implementation-map).** It points directly to permissions, approval gates, sensitive-data redaction and audit logging, with regression evidence and deployment boundaries.
 

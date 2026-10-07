@@ -49,6 +49,6 @@ Close with the implementation boundaries: single-user loopback deployment, expli
 
 ## Recorded operational walkthrough
 
-[Watch the actual browser recording](media/operational-walkthrough.mp4) (about 66 seconds, captioned, no audio). It demonstrates authenticated operator/reviewer separation on the simulated Gmail-to-Slack workflow, including a denied approval and redacted audit evidence.
+[Watch the actual browser recording](media/operational-walkthrough.mp4) (about 71 seconds, captioned, no audio). It demonstrates authenticated operator/reviewer separation on the simulated Gmail-to-Slack workflow, including a denied approval and redacted audit evidence.
 
 To reproduce the recording after building the frontend and installing Playwright Chromium, install `ffmpeg` and run `node scripts/record_walkthrough.mjs`. The script starts an isolated authenticated demo server, generates temporary credentials, verifies UI outcomes, records browser interactions, and exports an MP4. It never reads personal Messages or connects to real services.
