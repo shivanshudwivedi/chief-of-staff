@@ -88,7 +88,7 @@ Remote tools require approval unless their exact names are explicitly configured
 
 ![Connector desk](docs/images/connectors.png)
 
-The macOS bridge is disabled by default. It reads only **new incoming, one-to-one, allowlisted iMessages beginning with `/cos `**, using a read-only Messages database connection. It starts at the newest message and never imports your existing history automatically.
+The macOS bridge is disabled by default. It reads only **new incoming, one-to-one, allowlisted iMessages beginning with `/cos ` (or explicitly enabled self-chat commands)**, using a read-only Messages database connection. It starts at the newest message and never imports your existing history automatically.
 
 ```text
 You → /cos Brief me on my priorities
@@ -104,7 +104,7 @@ uv run python bridge/imessage.py --check
 uv run python bridge/imessage.py
 ```
 
-No message is sent during setup validation. Every outgoing message requires dashboard approval. “Accepted” means Messages accepted a send request, not that delivery was confirmed. Uncertain sends are never automatically retried. Group chats, SMS, attachments, and rich-only messages without a plain-text body are unsupported in this version. Native access depends on Apple's Messages database and scripting behavior.
+No message is sent during setup validation. Every outgoing message requires dashboard approval. “Accepted” means Messages accepted a send request, not that delivery was confirmed. Uncertain sends are never automatically retried. The bridge decodes supported typedstream text bodies on newer macOS versions; undecodable bodies, group chats, SMS, and attachments are skipped. Optional self-chat support accepts commands addressed to your own explicitly configured handle and suppresses outgoing reply echoes. Native access depends on Apple's Messages database and scripting behavior.
 
 ## How a run works
 
@@ -153,7 +153,7 @@ npm test
 
 Verified for this release:
 
-- **118 Python tests passed**, six inherited live-provider tests skipped by default.
+- **121 Python tests passed**, six inherited live-provider tests skipped by default.
 - **Two Playwright walkthroughs passed**: end-to-end desktop interactions and mobile layout/navigation.
 - A live OpenAI Responses run read tasks and memory and returned a grounded answer.
 - A running MCP notes server was discovered and invoked through the real HTTP adapter.

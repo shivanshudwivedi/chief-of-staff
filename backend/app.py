@@ -30,6 +30,7 @@ class Decision(BaseModel):
 
 
 class Inbound(BaseModel):
+    self_command: bool = False
     external_id: str = Field(min_length=1, max_length=200)
     sender: str = Field(min_length=1, max_length=200)
     content: str = Field(min_length=1, max_length=16000)
@@ -266,6 +267,13 @@ def create_app(path=None):
         authorize_bridge(request)
         if body.sender not in allowed_recipients():
             raise HTTPException(403, "Sender is not allowlisted")
+        if body.self_command:
+            if body.sender != os.getenv("COS_IMESSAGE_SELF_HANDLE", "").strip():
+                raise HTTPException(403, "Self-chat commands require the exact configured self handle")
+            if store.query(
+                "SELECT id FROM outbox WHERE recipient=? AND content=? LIMIT 1", (body.sender, body.content)
+            ):
+                return {"duplicate": True, "reason": "outgoing assistant echo"}
         if not body.content.strip().lower().startswith("/cos "):
             raise HTTPException(422, "Only explicit /cos commands are accepted")
         if not body.content[5:].strip():

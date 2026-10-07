@@ -388,3 +388,51 @@ def test_mcp_reads_run_in_parallel(client, monkeypatch):
         result = chat(client, "Read my tasks and preferences")
         assert result["status"] == "completed"
         assert set(seen) == {"tasks_list", "memory_search"}
+
+
+def test_typedstream_decoder_handles_real_archive_and_invalid_binary():
+    from bridge.imessage import decode_body
+
+    archive = bytes.fromhex(
+        "040b73747265616d747970656481e803840140848484084e53537472696e67018484084e534f626a656374008584012b0a2f636f732068656c6c6f86"
+    )
+    assert decode_body(archive) == "/cos hello"
+    assert decode_body(b"broken binary") is None
+    assert decode_body(b"x" * 65537) is None
+
+
+def test_native_reader_handles_self_chat_opt_in(tmp_path):
+    db_path = tmp_path / "chat.db"
+    with sqlite3.connect(db_path) as db:
+        db.executescript("""CREATE TABLE message(guid TEXT,text TEXT,handle_id INTEGER,is_from_me INTEGER,service TEXT);
+        CREATE TABLE handle(id TEXT); CREATE TABLE chat_message_join(message_id INTEGER,chat_id INTEGER);
+        CREATE TABLE chat_handle_join(chat_id INTEGER,handle_id INTEGER);
+        INSERT INTO handle VALUES('self'),('other'); INSERT INTO chat_handle_join VALUES(1,1),(2,2);
+        INSERT INTO message VALUES('self-command','/cos hello',1,1,'iMessage'),('other-outgoing','/cos hello',2,1,'iMessage');
+        INSERT INTO chat_message_join VALUES(1,1),(2,2);""")
+    rows, _ = read_messages(db_path, 0, {"self", "other"})
+    assert rows == []
+    rows, _ = read_messages(db_path, 0, {"self", "other"}, "self")
+    assert [r["guid"] for r in rows] == ["self-command"]
+    assert rows[0]["self_command"] is True
+
+
+def test_self_chat_outbound_echo_is_not_a_new_command(client, monkeypatch):
+    headers = enable_bridge(monkeypatch)
+    monkeypatch.setenv("COS_IMESSAGE_SELF_HANDLE", "+15550000001")
+    client.app.state.store.execute(
+        "INSERT INTO outbox VALUES(?,?,?,?,?,?)",
+        (uid(), "+15550000001", "/cos hello", "accepted", "now", None),
+    )
+    response = client.post(
+        "/bridge/inbound",
+        headers=headers,
+        json={
+            "external_id": "echo-guid",
+            "sender": "+15550000001",
+            "content": "/cos hello",
+            "self_command": True,
+        },
+    )
+    assert response.json()["reason"] == "outgoing assistant echo"
+    assert not client.get("/api/dashboard").json()["jobs"]

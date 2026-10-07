@@ -40,7 +40,7 @@ The bridge is a separate opt-in process. It opens Apple's Messages SQLite databa
 
 Assistant replies use the same proposal boundary. Approval creates an outbox record; the bridge atomically claims a queued record and uses fixed AppleScript with separate arguments. Successful process return means Messages accepted the request, not that delivery happened. Timeout/error and crash recovery favor uncertainty over duplicate texts.
 
-The adapter intentionally does not touch attachments, group chats, old history, SMS, or rich-only attributed bodies. Apple database/schema changes are a known integration boundary. macOS permissions and real recipient sending require an explicit operator setup and validation.
+The adapter skips attachments, group chats, old history, and SMS. For newer macOS text storage, it uses bounded typedstream decoding through pytypedstream and skips unknown/malformed archives. Optional self-chat commands require the exact configured self handle, and outbox echoes are suppressed to avoid feedback loops. Apple database/schema changes are a known integration boundary. macOS permissions and real recipient sending require an explicit operator setup and validation.
 
 ## Live MCP adapter
 

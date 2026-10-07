@@ -9,6 +9,8 @@ This optional bridge runs on a Mac signed into Messages. Nothing in the normal a
    COS_BRIDGE_TOKEN=a-random-token-of-at-least-24-characters
    COS_URL=http://127.0.0.1:8000
 
+   Optional self-chat: set COS_IMESSAGE_SELF_HANDLE to your own exact phone number or Apple ID and also include it in the allowlist. This enables /cos commands sent to yourself from the same Apple account; other outgoing chats remain excluded.
+
    Generate a token with:
    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 
@@ -35,7 +37,7 @@ This optional bridge runs on a Mac signed into Messages. Nothing in the normal a
 ## Boundaries
 
 - First startup begins at the newest message, never backfills your history. A local cursor under data/ resumes future polling. Deleting the cursor intentionally starts fresh, without importing older messages.
-- Only incoming, one-to-one iMessages with a non-empty plain-text body and the explicit /cos prefix are ingested. SMS, group chats, attachments and rich-only attributedBody messages are skipped. If a message is skipped, use a plain-text command or the web dashboard. The bridge depends on Apple's private Messages database layout and AppleScript support; macOS changes can require an adapter update.
+- Only incoming, one-to-one iMessages (plus explicitly enabled self-chat commands) with the explicit /cos prefix are ingested. The bridge reads plain text first and uses bounded pytypedstream decoding for supported attributedBody archives on newer Macs. SMS, group chats, attachments, malformed/unsupported archives, and oversized messages are skipped. Self-chat reply echoes matching the outbox are suppressed to prevent command loops. If a message is skipped, use the web dashboard. The bridge depends on Apple's private Messages database layout and AppleScript support; macOS changes can require an adapter update.
 - The native bridge never executes a shell command supplied by a message. Sending uses fixed AppleScript with separate argv values.
 - Every outgoing text needs dashboard approval, including the assistant's own replies. Changing the recipient allowlist takes effect on the server after restart and the bridge after restart.
 - Accepted means Messages accepted the AppleScript request. It is not a delivery receipt. An ambiguous timeout/crash produces an uncertain state that is never automatically retried. Inspect Messages before preparing another send. A claimed item stays claimed if the bridge dies until a server restart marks it uncertain.
@@ -46,3 +48,5 @@ This optional bridge runs on a Mac signed into Messages. Nothing in the normal a
 Apple's permission references:
 https://support.apple.com/en-hk/guide/mac-help/mchl108e1718/mac
 https://support.apple.com/en-hk/guide/mac-help/mchlccb25729/mac
+
+Typedstream decoder reference: https://github.com/dgelessus/python-typedstream

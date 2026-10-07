@@ -12,6 +12,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 import httpx
+import typedstream
+from typedstream.archiving import TypedValue
+from typedstream.types.foundation import NSString
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,30 +40,63 @@ def send(recipient, content):
     )
 
 
-def read_messages(db_path, after, allowlist):
+def decode_body(blob):
+    """Extract a typedstream NSString, never guess text by slicing binary bytes."""
+    if not blob or len(blob) > 65536:
+        return None
+    try:
+        root = typedstream.unarchive_from_data(blob)
+        if isinstance(root, NSString):
+            return root.value
+        clazz = getattr(root, "clazz", None)
+        if not clazz or clazz.name not in (b"NSAttributedString", b"NSMutableAttributedString"):
+            return None
+        for field in getattr(root, "contents", []):
+            value = field.value if isinstance(field, TypedValue) else field
+            if isinstance(value, NSString):
+                return value.value
+    except Exception:
+        return None
+    return None
+
+
+def read_messages(db_path, after, allowlist, self_handle=""):
     # Connect mode=ro rather than copying personal Messages history.
+    if self_handle and self_handle not in allowlist:
+        raise ValueError("Self-chat handle must be allowlisted")
     with sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True) as db:
         db.row_factory = sqlite3.Row
         scanned = db.execute(
             "SELECT ROWID FROM message WHERE ROWID>? ORDER BY ROWID LIMIT 200", (after,)
         ).fetchall()
         watermark = scanned[-1][0] if scanned else after
-        # Ignore group chats, outgoing messages, attachments and SMS. Never ingest non-command texts.
+        columns = {row[1] for row in db.execute("PRAGMA table_info(message)")}
+        body_column = "m.attributedBody" if "attributedBody" in columns else "NULL"
         rows = db.execute(
-            """SELECT m.ROWID AS rowid,m.guid,m.text,h.id AS sender
-          FROM message m JOIN handle h ON m.handle_id=h.ROWID
+            f"""SELECT m.ROWID AS rowid,m.guid,m.text,h.id AS sender,m.is_from_me,
+          {body_column} AS body FROM message m JOIN handle h ON m.handle_id=h.ROWID
           JOIN chat_message_join cm ON cm.message_id=m.ROWID
-          WHERE m.ROWID>? AND m.ROWID<=? AND m.is_from_me=0 AND m.service='iMessage'
+          WHERE m.ROWID>? AND m.ROWID<=? AND (m.is_from_me=0 OR (m.is_from_me=1 AND h.id=?))
+          AND m.service='iMessage'
           AND (SELECT COUNT(*) FROM chat_handle_join ch WHERE ch.chat_id=cm.chat_id)=1
           ORDER BY m.ROWID LIMIT 200""",
-            (after, watermark),
+            (after, watermark, self_handle),
         ).fetchall()
-        result = [
-            dict(r)
-            for r in rows
-            if r["sender"] in allowlist and r["text"] and r["text"].lower().startswith("/cos ")
-        ]
-        # Advance over every inspected row, but only after server acceptance.
+        result = []
+        for row in rows:
+            if row["sender"] not in allowlist:
+                continue
+            text = row["text"] or decode_body(row["body"])
+            if text and len(text) <= 16000 and text.lower().startswith("/cos "):
+                result.append(
+                    {
+                        "rowid": row["rowid"],
+                        "guid": row["guid"],
+                        "sender": row["sender"],
+                        "text": text,
+                        "self_command": bool(row["is_from_me"]),
+                    }
+                )
         return result, watermark
 
 
@@ -100,11 +136,14 @@ def main():
     checkpoint = ROOT / "data/imessage-cursor.json"
     checkpoint.parent.mkdir(parents=True, exist_ok=True)
     cursor = json.loads(checkpoint.read_text())["rowid"] if checkpoint.exists() else newest
+    self_handle = os.getenv("COS_IMESSAGE_SELF_HANDLE", "").strip()
+    if self_handle and self_handle not in allowed:
+        raise SystemExit("COS_IMESSAGE_SELF_HANDLE must also be in COS_IMESSAGE_ALLOWLIST")
     with httpx.Client(base_url=url, headers={"Authorization": "Bearer " + token}, timeout=30) as client:
         while True:
             try:
                 client.post("/bridge/heartbeat", json={"status": "connected"}).raise_for_status()
-                messages, watermark = read_messages(args.db, cursor, allowed)
+                messages, watermark = read_messages(args.db, cursor, allowed, self_handle)
                 for message in messages:
                     client.post(
                         "/bridge/inbound",
@@ -112,6 +151,7 @@ def main():
                             "external_id": message["guid"] or str(message["rowid"]),
                             "sender": message["sender"],
                             "content": message["text"],
+                            "self_command": message["self_command"],
                         },
                     ).raise_for_status()
                 # Atomic checkpoint; an HTTP failure leaves cursor unchanged for deduplicated replay.
