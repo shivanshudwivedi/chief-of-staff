@@ -1,0 +1,9 @@
+{
+  "servers": [
+    {
+      "name": "Workspace notes",
+      "url": "http://127.0.0.1:8765/mcp",
+      "read_only_tools": ["list_notes"]
+    }
+  ]
+}

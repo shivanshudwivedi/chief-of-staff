@@ -1,0 +1,12 @@
+Chief Of Staff was built using reusable code from the candidate project supplied by the repository owner.
+
+The inherited backend/helpers modules, simulated service packages, fixture registry/harness, tool models,
+and their regression tests retain their original source provenance. The product API, Responses engine,
+persistence layer, local tools, MCP adapter, macOS bridge, React dashboard, product tests, and product
+documentation were added for Chief Of Staff.
+
+The original interview README, submitting script/archive, human-authored DESIGN.md, Loom link,
+private environment files, credentials, virtual environments, and personal Messages data are not included.
+
+Third-party dependencies remain subject to their respective licenses. This notice does not assert a new
+license over the inherited supplied code.

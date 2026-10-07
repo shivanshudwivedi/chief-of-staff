@@ -1,0 +1,12 @@
+[project]
+name = "chief-of-staff"
+version = "1.0.0"
+description = "A local-first personal chief of staff with an auditable tool orchestrator and iMessage bridge"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115,<1", "openai>=2.40,<3", "pydantic>=2,<3", "uvicorn[standard]>=0.34,<1", "python-dotenv>=1,<2", "httpx>=0.28,<1", "mcp>=1.28,<2", "jsonschema>=4,<5"]
+[dependency-groups]
+dev = ["pytest>=8,<9", "ruff>=0.11,<1"]
+[tool.ruff]
+line-length = 110
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

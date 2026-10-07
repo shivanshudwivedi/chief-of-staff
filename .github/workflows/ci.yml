@@ -1,0 +1,32 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.8.22'
+          python-version: '3.12'
+      - run: uv sync --frozen
+      - run: npm --prefix frontend ci
+      - run: npm run build
+      - run: uv run ruff check backend/app.py backend/engine.py backend/store.py backend/local_tools.py backend/connectors.py bridge/imessage.py scripts/example_mcp.py backend/tests/test_product.py
+      - run: uv run pytest backend/tests -q
+      - run: cd frontend && npx playwright install --with-deps chromium
+      - run: cd frontend && npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-test-results
+          path: frontend/test-results/

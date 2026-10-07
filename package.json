@@ -1,0 +1,12 @@
+{
+  "name": "chief-of-staff",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix frontend ci && npm run build",
+    "build": "npm --prefix frontend run build",
+    "dev": "npm --prefix frontend run dev",
+    "test:ui": "npm --prefix frontend test",
+    "check": "npm --prefix frontend run check"
+  }
+}
