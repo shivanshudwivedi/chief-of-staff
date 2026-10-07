@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 import json
+import hashlib
+import hmac
+import secrets
 import os
 import re
 import threading
@@ -19,6 +22,10 @@ from backend.helpers.executor import ExecutionLog, execute_one, signature
 from backend.helpers.router import lexical_scores
 from backend.helpers.schema import tools_payload
 from backend.store import now, uid
+from backend.audit import Audit, canonical
+from backend.redaction import redact
+from backend.security import Authorization, CURRENT, effective, required
+from backend.helpers.policy import GUARDED
 
 # Mock registries share process state. Serialize runs and approved writes.
 EXECUTION_LOCK = threading.RLock()
@@ -48,18 +55,56 @@ class Engine:
     def __init__(self, store):
         self.store = store
         self.connectors = Connectors()
+        self.auth = Authorization()
+        self.audit = Audit(store)
+        self.approval_secret = os.getenv("COS_APPROVAL_SECRET") or secrets.token_hex(32)
+        store.execute(
+            "CREATE TABLE IF NOT EXISTS approval_metadata(approval_id TEXT PRIMARY KEY,proposer TEXT,payload_hmac TEXT)"
+        )
 
     @property
     def mode(self):
         return os.getenv("COS_MODE", "demo")
 
-    def execute(self, rid, name, args, *, approved=False, timeout=25):
+    def execute(self, rid, name, args, *, approved=False, timeout=25, principal=None):
         started = time.perf_counter()
+        principal = self.auth.resolve((principal or effective()).id)
+        self.audit.append(principal.id, "tool.request", rid, "requested", {"tool": name, "arguments": args})
         try:
+            principal.require_tool(name)
+            mutation = (
+                not self.connectors.tools[name]["read_only"]
+                if name in self.connectors.tools
+                else name in {"tasks_add", "tasks_complete", "memory_remember", "imessage_draft"}
+                or is_write(name)
+            )
+            capability = (
+                "tasks.write"
+                if name in {"tasks_add", "tasks_complete"}
+                else "memory.write"
+                if name == "memory_remember"
+                else "actions.approve"
+                if approved and mutation
+                else "actions.propose"
+                if mutation
+                else "tools.read"
+            )
+            principal.require(capability)
+            if redact(args, pii=False) != args and mutation:
+                raise ValueError("Credential-bearing arguments cannot be persisted or sent")
+            if not approved and name in GUARDED:
+                request = self.store.query(
+                    "SELECT m.content FROM messages m JOIN runs r ON r.conversation_id=m.conversation_id WHERE r.id=? AND m.role='user' ORDER BY m.created_at DESC LIMIT 1",
+                    (rid,),
+                )
+                if not request or not any(
+                    phrase in request[0]["content"].lower() for phrase in GUARDED[name]
+                ):
+                    raise PermissionError("Destructive action requires explicit user intent")
             if name in self.connectors.tools:
                 self.connectors.validate(name, args)
                 if not self.connectors.tools[name]["read_only"] and not approved:
-                    result = self.pending(rid, name, args)
+                    result = self.pending(rid, name, args, principal)
                 else:
                     result = self.connectors.invoke(name, args, timeout=timeout)
             elif name in local_tools.TOOLS:
@@ -77,7 +122,7 @@ class Engine:
                         )
                         result = {"outbox_id": id, "status": "queued", "delivery": "not yet sent"}
                     else:
-                        result = self.pending(rid, name, args)
+                        result = self.pending(rid, name, args, principal)
                 else:
                     if name == "memory_remember":
                         request = self.store.query(
@@ -100,7 +145,7 @@ class Engine:
                 # Validate before saving the reviewable proposal.
                 args = get_tool_spec(name).args_model.model_validate(args).model_dump(exclude_none=True)
                 if is_write(name) and not approved:
-                    result = self.pending(rid, name, args)
+                    result = self.pending(rid, name, args, principal)
                 else:
                     outcome = execute_one(name, args, ExecutionLog())
                     if outcome.error:
@@ -108,12 +153,80 @@ class Engine:
                     result = outcome.result
             error = None
         except Exception as exc:
-            result, error = None, str(exc)[:1000]
+            result, error = None, redact(str(exc)[:1000])
         self.store.event(rid, name, args, result, error, int((time.perf_counter() - started) * 1000))
+        self.audit.append(
+            principal.id,
+            "tool.complete",
+            rid,
+            "error"
+            if error
+            else "pending"
+            if isinstance(result, dict) and result.get("status") == "pending_approval"
+            else "success",
+            {"tool": name, "arguments": args, "result": result, "error": error},
+        )
         return result, error
 
-    def pending(self, rid, name, args):
+    def seal(self, row, proposer):
+        payload = {
+            "id": row["id"],
+            "run_id": row["run_id"],
+            "name": row["name"],
+            "arguments": json.loads(row["arguments"]),
+            "proposer": proposer,
+        }
+        return hmac.new(
+            self.approval_secret.encode(), canonical(payload).encode(), hashlib.sha256
+        ).hexdigest()
+
+    def check_approval(self, row, approver):
+        metadata = self.store.query("SELECT * FROM approval_metadata WHERE approval_id=?", (row["id"],))
+        if not metadata or not hmac.compare_digest(
+            metadata[0]["payload_hmac"], self.seal(row, metadata[0]["proposer"])
+        ):
+            raise PermissionError("Proposal signature is invalid; request a new proposal")
+        proposer = self.auth.resolve(metadata[0]["proposer"])
+        proposer.require("actions.propose")
+        proposer.require_tool(row["name"])
+        approver.require("actions.approve")
+        approver.require_tool(row["name"])
+        if (
+            required() or os.getenv("COS_REQUIRE_SEPARATE_APPROVER") == "true"
+        ) and proposer.id == approver.id:
+            raise PermissionError("A different principal must approve this proposal")
+
+    def tool_permitted(self, name, principal=None):
+        principal = principal or effective()
+        try:
+            principal.require_tool(name)
+            if name in {"tasks_add", "tasks_complete"}:
+                principal.require("tasks.write")
+            elif name == "memory_remember":
+                principal.require("memory.write")
+            elif (
+                name == "imessage_draft"
+                or (name in self.connectors.tools and not self.connectors.tools[name]["read_only"])
+                or (name not in local_tools.TOOLS and is_write(name))
+            ):
+                principal.require("actions.propose")
+            else:
+                principal.require("tools.read")
+            return True
+        except PermissionError:
+            return False
+
+    def pending(self, rid, name, args, principal=None):
+        principal = principal or effective()
         id = self.store.approval(rid, name, args)
+        row = self.store.query("SELECT * FROM approvals WHERE id=?", (id,))[0]
+        self.store.execute(
+            "INSERT OR IGNORE INTO approval_metadata VALUES(?,?,?)",
+            (id, principal.id, self.seal(row, principal.id)),
+        )
+        self.audit.append(
+            principal.id, "approval.proposed", id, "pending", {"tool": name, "arguments": args, "run_id": rid}
+        )
         return {
             "approval_id": id,
             "status": "pending_approval",
@@ -121,9 +234,15 @@ class Engine:
             "instruction": "Tell the user the exact proposal is waiting for approval in the dashboard.",
         }
 
-    def run(self, cid, text):
-        with EXECUTION_LOCK:
-            return self._run(cid, text)
+    def run(self, cid, text, principal=None):
+        principal = self.auth.resolve((principal or effective()).id)
+        principal.require("chat.execute")
+        context = CURRENT.set(principal)
+        try:
+            with EXECUTION_LOCK:
+                return self._run(cid, redact(text, pii=False))
+        finally:
+            CURRENT.reset(context)
 
     def _run(self, cid, text):
         rid = uid()
@@ -150,6 +269,8 @@ class Engine:
             status, trace = "failed", {}
             reply = "I couldn’t finish this run. Check the activity log for the error. Actions already logged may have completed; pending proposals have not executed."
         trace["duration_ms"] = int((time.perf_counter() - started) * 1000)
+        reply = redact(reply, pii=False)
+        error = redact(error)
         self.store.message(cid, "assistant", reply)
         convo = self.store.query("SELECT * FROM conversations WHERE id=?", (cid,))[0]
         if convo["channel"] == "imessage" and convo["recipient"]:
@@ -241,8 +362,9 @@ class Engine:
                 + self.connectors.schemas(live)
                 + [DISCOVERY]
             )
+            tools = [t for t in tools if t["name"] == "find_tools" or self.tool_permitted(t["name"])]
             response = client.with_options(timeout=min(25, remaining)).responses.create(
-                model=model, input=convo, tools=tools, max_output_tokens=2500
+                model=model, input=redact(convo, pii=False), tools=tools, max_output_tokens=2500
             )
             calls = [item for item in response.output if item.type == "function_call"]
             trace["steps"].append({"step": step + 1, "tools": [c.name for c in calls]})
@@ -290,6 +412,7 @@ class Engine:
                                 call.name,
                                 args,
                                 timeout=max(0.1, deadline - time.monotonic()),
+                                principal=effective(),
                             )
                     for call, args in read_batch:
                         key = signature(call.name, args)
@@ -304,7 +427,9 @@ class Engine:
                             {
                                 "type": "function_call_output",
                                 "call_id": call.call_id,
-                                "output": to_tool_message(result, error),
+                                "output": to_tool_message(
+                                    redact(result, pii=False), redact(error, pii=False)
+                                ),
                             }
                         )
                 if trace.get("stopped"):
@@ -319,11 +444,14 @@ class Engine:
                     if call.name == "find_tools":
                         from backend.helpers.toolfinder import find
 
+                        effective().require("tools.read")
                         added, note = find(str(args.get("need", "")), set(active))
+                        added = [name for name in added if self.tool_permitted(name)]
                         active = list(dict.fromkeys(active + added))[:60]
                         live = list(
                             dict.fromkeys(live + self.connectors.select(str(args.get("need", "")), 20))
                         )[:20]
+                        live = [name for name in live if self.tool_permitted(name)]
                         result = {"discovered": [n for n in added if n in active] + live, "note": note}
                         self.store.event(rid, call.name, args, result)
                     elif (
@@ -351,7 +479,7 @@ class Engine:
                     {
                         "type": "function_call_output",
                         "call_id": call.call_id,
-                        "output": to_tool_message(result, error),
+                        "output": to_tool_message(redact(result, pii=False), redact(error, pii=False)),
                     }
                 )
             if trace.get("stopped"):

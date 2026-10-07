@@ -8,6 +8,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from backend.redaction import redact
 
 
 def now():
@@ -69,12 +70,15 @@ class Store:
     def conversation(self, title="New conversation", channel="web", recipient=None):
         id = uid()
         self.execute(
-            "INSERT INTO conversations VALUES(?,?,?,?,?)", (id, title[:100], channel, recipient, now())
+            "INSERT INTO conversations VALUES(?,?,?,?,?)",
+            (id, redact(title[:100], pii=False), channel, recipient, now()),
         )
         return id
 
     def message(self, cid, role, content):
-        self.execute("INSERT INTO messages VALUES(?,?,?,?,?)", (uid(), cid, role, content, now()))
+        self.execute(
+            "INSERT INTO messages VALUES(?,?,?,?,?)", (uid(), cid, role, redact(content, pii=False), now())
+        )
 
     def messages(self, cid):
         return self.query("SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at", (cid,))
@@ -82,7 +86,16 @@ class Store:
     def event(self, rid, name, args, result=None, error=None, duration=0):
         self.execute(
             "INSERT INTO events VALUES(?,?,?,?,?,?,?,?)",
-            (uid(), rid, name, json.dumps(args), json.dumps(result, default=str), error, duration, now()),
+            (
+                uid(),
+                rid,
+                name,
+                json.dumps(redact(args)),
+                json.dumps(redact(result), default=str),
+                redact(error),
+                duration,
+                now(),
+            ),
         )
 
     def approval(self, rid, name, args):

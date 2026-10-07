@@ -14,6 +14,8 @@ export default defineConfig({
     cwd: fileURLToPath(new URL("..", import.meta.url)),
     env: {
       COS_MODE: "demo",
+      COS_AUTH_CONFIG: "",
+      COS_AUTH_REQUIRED: "false",
       COS_DB_PATH: join(testData, "chief.sqlite3"),
       COS_MCP_CONFIG: "",
       COS_API_TOKEN: "",

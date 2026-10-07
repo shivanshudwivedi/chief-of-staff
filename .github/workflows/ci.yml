@@ -21,7 +21,7 @@ jobs:
       - run: uv sync --frozen
       - run: npm --prefix frontend ci
       - run: npm run build
-      - run: uv run ruff check backend/app.py backend/engine.py backend/store.py backend/local_tools.py backend/connectors.py bridge/imessage.py scripts/example_mcp.py backend/tests/test_product.py
+      - run: uv run ruff check backend/security.py backend/redaction.py backend/audit.py backend/tests/test_security.py scripts/setup_auth.py backend/app.py backend/engine.py backend/store.py backend/local_tools.py backend/connectors.py bridge/imessage.py scripts/example_mcp.py backend/tests/test_product.py
       - run: uv run pytest backend/tests -q
       - run: cd frontend && npx playwright install --with-deps chromium
       - run: cd frontend && npx playwright test

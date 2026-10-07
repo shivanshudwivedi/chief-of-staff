@@ -39,6 +39,7 @@ import "./style.css";
 type Row = Record<string, any>;
 type Dashboard = {
   config: Row;
+  security: Row;
   conversations: Row[];
   tasks: Row[];
   memories: Row[];
@@ -782,6 +783,58 @@ function App() {
                   errors, and run limits. This is the execution trail, not
                   hidden model reasoning.
                 </p>
+                <section className="security-journal">
+                  <div className="security-heading">
+                    <div>
+                      <h2>Security journal</h2>
+                      <p>
+                        Signed proposals, explicit permissions, and redacted
+                        records.
+                      </p>
+                    </div>
+                    <span className="tag approved">
+                      {data?.security.integrity.valid
+                        ? "Hash chain verified"
+                        : "Integrity check failed"}
+                    </span>
+                  </div>
+                  <p className="security-identity">
+                    {data?.security.authenticated
+                      ? "Authenticated workspace"
+                      : "Trusted local development"}{" "}
+                    · {data?.security.principal} ·{" "}
+                    {data?.security.roles.join(", ")} ·{" "}
+                    {data?.security.integrity.checked} records
+                  </p>
+                  <div className="security-records">
+                    {data?.security.records.map((record: Row) => (
+                      <details className="event" key={record.id}>
+                        <summary>
+                          <ShieldCheck size={14} />
+                          <strong>{record.action}</strong>
+                          <span>
+                            {record.actor} · {record.outcome}
+                          </span>
+                        </summary>
+                        <pre>
+                          {JSON.stringify(
+                            {
+                              payload: record.payload,
+                              previous_hash: record.previous_hash,
+                              record_hash: record.record_hash,
+                            },
+                            null,
+                            2,
+                          )}
+                        </pre>
+                      </details>
+                    ))}
+                  </div>
+                  <small>
+                    Local integrity verification. Retain the journal head
+                    externally to detect a complete rewrite.
+                  </small>
+                </section>
                 <div className="activity-layout">
                   <div className="runs">
                     {data?.runs.map((r) => (
@@ -1009,8 +1062,19 @@ function App() {
                   Switch modes in .env and restart the server. In OpenAI mode,
                   prompts and tool context are sent to your configured provider.
                 </p>
+                <p>
+                  Identity:{" "}
+                  <strong>
+                    {data?.security.principal || "Not authenticated"}
+                  </strong>{" "}
+                  · {data?.security.roles.join(", ")}
+                  <br />
+                  {data?.security.authenticated
+                    ? "Separate proposer and approver required."
+                    : "Trusted local mode. Configure authenticated mode for role-based access."}
+                </p>
                 <label>
-                  Optional local API token
+                  Workspace access token
                   <input
                     className="settings-input"
                     type="password"
@@ -1019,7 +1083,7 @@ function App() {
                       setToken(e.target.value);
                       sessionStorage.setItem("cos-token", e.target.value);
                     }}
-                    placeholder="Match COS_API_TOKEN from .env"
+                    placeholder="Token for your configured principal"
                   />
                 </label>
                 <p className="fine-print">

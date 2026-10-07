@@ -6,7 +6,7 @@ Chief Of Staff extends the supplied orchestrator into a single-user local applic
 
 `backend.app` serves the actual product. The retained `backend.main` supplies a tool registry and regression harness. Its old chat/reset endpoints are not mounted in the product. This keeps compatibility checks useful without creating a route around the approval policy.
 
-The React desk talks to one same-origin API. The production bundle is served by FastAPI. Development uses Vite's proxy. Browser origin and Host checks reject DNS rebinding/cross-site access from arbitrary web origins; optional API authentication is separate from mandatory bridge authentication. Binding to loopback is part of the deployment contract, not a substitute for multi-user authorization.
+The React desk talks to one same-origin API. The production bundle is served by FastAPI. Development uses Vite's proxy. Browser origin and Host checks reject DNS rebinding/cross-site access from arbitrary web origins; API authorization supports server-owned roles and tool scopes in authenticated mode, separate from mandatory bridge authentication. Binding to loopback is part of the deployment contract, not a substitute for multi-user authorization.
 
 ## Persistence and jobs
 
@@ -14,7 +14,7 @@ SQLite runs in WAL mode with per-operation connections and transactional writes.
 
 A process-wide execution lock serializes turns and approvals because the inherited mock services share mutable module state. Independent pure read batches within a turn use up to four workers. Mixed batches run in order. The system is deliberately single-process: do not start multiple uvicorn workers against this database. Scaling would require a coordinated worker queue and durable connector state.
 
-Queued jobs resume after restart. Running jobs become interrupted rather than being replayed. A crash cannot safely prove whether a remote mutation succeeded. Claimed sends and executing approvals become uncertain. Pending non-iMessage proposals expire after restart and must be planned again, because mock state resets and live schemas may change. Pending iMessage drafts are revalidated against the current enablement and allowlist at approval time.
+Queued jobs resume after restart. Running jobs become interrupted rather than being replayed. A crash cannot safely prove whether a remote mutation succeeded. Claimed sends and executing approvals become uncertain. Pending non-iMessage proposals expire after restart and must be planned again, because mock state resets and live schemas may change. Pending iMessage drafts are revalidated against the current enablement, allowlist, identities, scopes and signed arguments at approval time. Trusted local mode uses a process-random signature key, so old drafts must be re-planned. Authenticated mode uses a persistent signing secret.
 
 ## Orchestration
 
@@ -53,3 +53,7 @@ Sessions open per operation with bounded timeouts. This avoids long-lived connec
 Deterministic demo flows and OpenAI flows share the executor, persistence, proposals and journal. Demo mode labels fixture data; live MCP tools are labeled LIVE. A prompt instructs the model to prefer relevant live connectors and to separate simulated findings from real ones. This is not a proof of semantic correctness: tool schemas, approvals, tests, and honest status reporting reduce concrete failure modes, while users still review high-impact proposals.
 
 The test suite exercises state changes, persistence, concurrent read scheduling, provider failure after a completed task, call budgets, schema validation, repeated approvals, restart uncertainty, browser boundary checks, sender allowlists, ingestion deduplication, outbox acknowledgements and fixed-script argv handling. Browser tests exercise the user-visible walkthrough and mobile overflow/navigation. A live Responses smoke test and real local MCP discovery/read test validate protocol integration beyond mocks.
+
+## Enforced security controls
+
+See [SECURITY.md](SECURITY.md) for the role matrix, signed approval boundary, recursive redaction and hash-chained journal. Policy is resolved fresh at API entry, queued-job start, tool dispatch and review. Concurrent reads receive the requesting principal explicitly rather than relying on context propagation.

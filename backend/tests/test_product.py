@@ -18,6 +18,8 @@ from bridge.imessage import read_messages, send
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("COS_MODE", "demo")
+    monkeypatch.delenv("COS_AUTH_CONFIG", raising=False)
+    monkeypatch.setenv("COS_AUTH_REQUIRED", "false")
     monkeypatch.delenv("COS_API_TOKEN", raising=False)
     monkeypatch.delenv("COS_MCP_CONFIG", raising=False)
     monkeypatch.delenv("COS_BRIDGE_TOKEN", raising=False)

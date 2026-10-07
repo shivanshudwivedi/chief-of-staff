@@ -1457,3 +1457,51 @@ pre {
     transition: none !important;
   }
 }
+
+.security-journal {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 28px;
+  background: #fffefa;
+}
+.security-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.security-heading h2 {
+  font-size: 22px;
+  margin: 0;
+}
+.security-heading p,
+.security-identity {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.security-records {
+  max-height: 360px;
+  overflow: auto;
+  margin: 16px 0;
+}
+.security-records summary {
+  flex-wrap: wrap;
+}
+.security-records strong {
+  font-weight: 500;
+}
+.security-journal small {
+  color: var(--muted);
+  font-size: 11px;
+}
+@media (max-width: 650px) {
+  .security-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .security-journal {
+    padding: 16px;
+  }
+}

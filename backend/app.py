@@ -10,11 +10,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from backend.engine import Engine, EXECUTION_LOCK, allowed_recipients, bridge_enabled
 from backend.store import Store, now, uid
+from backend.security import CURRENT, effective, required, route_capability, ROLE_CAPABILITIES
+from backend.redaction import redact
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -54,13 +57,17 @@ def create_app(path=None):
         "status TEXT,result TEXT,created_at TEXT)"
     )
 
+    store.execute("CREATE TABLE IF NOT EXISTS job_principals(job_id TEXT PRIMARY KEY,principal_id TEXT)")
+
     def work(jid):
         changed = store.execute("UPDATE jobs SET status='running' WHERE id=? AND status='queued'", (jid,))
         if not changed:
             return
         job = store.query("SELECT * FROM jobs WHERE id=?", (jid,))[0]
         try:
-            result = engine.run(job["conversation_id"], job["content"])
+            identity = store.query("SELECT principal_id FROM job_principals WHERE job_id=?", (jid,))
+            principal = engine.auth.resolve(identity[0]["principal_id"] if identity else "local-owner")
+            result = engine.run(job["conversation_id"], job["content"], principal)
             status = "failed" if result["status"] == "failed" else "completed"
         except Exception:
             result, status = {"error": "Run interrupted. Check the activity log."}, "failed"
@@ -68,12 +75,17 @@ def create_app(path=None):
 
     def enqueue(cid, content):
         jid = uid()
-        store.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?)", (jid, cid, content, "queued", None, now()))
+        store.execute(
+            "INSERT INTO jobs VALUES(?,?,?,?,?,?)",
+            (jid, cid, redact(content, pii=False), "queued", None, now()),
+        )
+        store.execute("INSERT INTO job_principals VALUES(?,?)", (jid, effective().id))
         pool.submit(work, jid)
         return jid
 
     @asynccontextmanager
     async def lifespan(app):
+        engine.auth.validate()
         await asyncio.to_thread(engine.connectors.discover)
         # Never retry interrupted writes or sends automatically.
         store.execute("UPDATE runs SET status='interrupted',finished_at=? WHERE status='running'", (now(),))
@@ -101,6 +113,17 @@ def create_app(path=None):
     app = FastAPI(title="Chief Of Staff", version="1.0.0", lifespan=lifespan)
     app.state.store, app.state.engine = store, engine
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request, exc):
+        return JSONResponse(
+            {
+                "detail": redact(
+                    [{k: v for k, v in error.items() if k not in {"input", "ctx"}} for error in exc.errors()]
+                )
+            },
+            status_code=422,
+        )
+
     @app.middleware("http")
     async def local_boundary(request: Request, call_next):
         host = (request.url.hostname or "").lower()
@@ -115,12 +138,41 @@ def create_app(path=None):
             "http://127.0.0.1:5173",
         }:
             return JSONResponse({"detail": "Untrusted browser origin"}, status_code=403)
+        context = None
         if request.url.path.startswith("/api"):
-            token = os.getenv("COS_API_TOKEN", "")
-            actual = request.headers.get("authorization", "").removeprefix("Bearer ")
-            if token and not hmac.compare_digest(actual, token):
-                return JSONResponse({"detail": "API token required"}, status_code=401)
-        response = await call_next(request)
+            try:
+                principal = engine.auth.authenticate(request.headers.get("authorization", ""))
+            except PermissionError as exc:
+                engine.audit.append(
+                    "anonymous", "http.authorization", request.url.path, "denied", {"reason": str(exc)}
+                )
+                return JSONResponse({"detail": str(exc)}, status_code=401)
+            try:
+                principal.require(route_capability(request.method, request.url.path))
+            except PermissionError as exc:
+                engine.audit.append(
+                    principal.id, "http.authorization", request.url.path, "denied", {"reason": str(exc)}
+                )
+                return JSONResponse({"detail": str(exc)}, status_code=403)
+            request.state.principal = principal
+            context = CURRENT.set(principal)
+            if request.method != "GET":
+                engine.audit.append(
+                    principal.id, "http.mutation", request.url.path, "requested", {"method": request.method}
+                )
+        try:
+            response = await call_next(request)
+            if context is not None and request.method != "GET":
+                engine.audit.append(
+                    principal.id,
+                    "http.mutation",
+                    request.url.path,
+                    "success" if response.status_code < 400 else "denied",
+                    {"method": request.method, "status": response.status_code},
+                )
+        finally:
+            if context is not None:
+                CURRENT.reset(context)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Content-Security-Policy"] = (
@@ -167,10 +219,23 @@ def create_app(path=None):
         return {
             **store.snapshot(),
             "config": config(),
+            "security": {
+                "authenticated": required(),
+                "principal": effective().id,
+                "roles": effective().roles,
+                "capabilities": sorted({c for r in effective().roles for c in ROLE_CAPABILITIES[r]}),
+                "separate_approver": required() or os.getenv("COS_REQUIRE_SEPARATE_APPROVER") == "true",
+                "integrity": engine.audit.verify(),
+                "records": engine.audit.records(30),
+            },
             "jobs": store.query(
                 "SELECT id,status,conversation_id,created_at FROM jobs ORDER BY created_at DESC LIMIT 50"
             ),
         }
+
+    @app.get("/api/audit")
+    def audit():
+        return {"integrity": engine.audit.verify(), "records": engine.audit.records()}
 
     @app.get("/api/conversations/{cid}")
     def conversation(cid: str):
@@ -221,6 +286,21 @@ def create_app(path=None):
     def decide(aid: str, body: Decision):
         # CAS ensures simultaneous clicks can't execute a side effect twice.
         with EXECUTION_LOCK:
+            rows = store.query("SELECT * FROM approvals WHERE id=?", (aid,))
+            if not rows:
+                raise HTTPException(404, "Approval not found")
+            try:
+                engine.check_approval(rows[0], effective())
+            except PermissionError as exc:
+                engine.audit.append(effective().id, "approval.decision", aid, "denied", {"reason": str(exc)})
+                raise HTTPException(403, str(exc)) from exc
+            engine.audit.append(
+                effective().id,
+                "approval.decision",
+                aid,
+                "requested",
+                {"tool": rows[0]["name"]},
+            )
             status = "executing" if body.approve else "rejected"
             if not store.execute(
                 "UPDATE approvals SET status=? WHERE id=? AND status='pending'", (status, aid)
@@ -251,7 +331,10 @@ def create_app(path=None):
         token = os.getenv("COS_BRIDGE_TOKEN", "")
         actual = request.headers.get("authorization", "").removeprefix("Bearer ")
         if not bridge_enabled() or len(token) < 24 or not hmac.compare_digest(actual, token):
+            engine.audit.append("anonymous", "bridge.authorization", request.url.path, "denied")
             raise HTTPException(401, "Bridge disabled or token invalid (minimum 24 characters)")
+        if request.url.path != "/bridge/heartbeat":
+            engine.audit.append("imessage-bridge", "bridge.request", request.url.path, "authenticated")
 
     @app.post("/bridge/heartbeat")
     def heartbeat(request: Request, body: Heartbeat):
@@ -296,12 +379,13 @@ def create_app(path=None):
                 )
             db.execute(
                 "INSERT INTO inbox VALUES(?,?,?,?,?)",
-                (body.external_id, body.sender, body.content, cid, now()),
+                (body.external_id, body.sender, redact(body.content, pii=False), cid, now()),
             )
             jid = uid()
+            db.execute("INSERT INTO job_principals VALUES(?,?)", (jid, "imessage-bridge"))
             db.execute(
                 "INSERT INTO jobs VALUES(?,?,?,?,?,?)",
-                (jid, cid, body.content[5:].strip(), "queued", None, now()),
+                (jid, cid, redact(body.content[5:].strip(), pii=False), "queued", None, now()),
             )
         pool.submit(work, jid)
         return {"job_id": jid, "conversation_id": cid, "duplicate": False}
@@ -333,7 +417,7 @@ def create_app(path=None):
             raise HTTPException(422, "Use accepted or uncertain; Messages does not verify delivery")
         if not store.execute(
             "UPDATE outbox SET status=?,error=? WHERE id=? AND status='claimed'",
-            (body.status, body.error, oid),
+            (body.status, redact(body.error), oid),
         ):
             raise HTTPException(409, "Outbox item not claimed or already acknowledged")
         return {"ok": True}

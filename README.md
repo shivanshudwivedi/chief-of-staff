@@ -11,7 +11,7 @@ A local-first personal assistant that turns scattered context into clear priorit
 ![React](https://img.shields.io/badge/React-TypeScript-214c3e)
 ![Local first](https://img.shields.io/badge/Local-first-708967)
 
-**[Quick start](#quick-start) · [Five-minute walkthrough](docs/WALKTHROUGH.md) · [iMessage](docs/IMESSAGE.md) · [Live connectors](docs/CONNECTORS.md) · [Architecture](docs/ARCHITECTURE.md)**
+**[Reviewer guide](docs/REVIEWER_GUIDE.md) · [Security implementation](docs/SECURITY.md) · [Quick start](#quick-start) · [Five-minute walkthrough](docs/WALKTHROUGH.md) · [iMessage](docs/IMESSAGE.md) · [Live connectors](docs/CONNECTORS.md) · [Architecture](docs/ARCHITECTURE.md)**
 
 ![Chief Of Staff desktop](docs/images/desk.png)
 
@@ -31,7 +31,10 @@ The web desk is the control center. An optional native macOS bridge lets you use
 | Memory | Save explicitly requested preferences, use them as context, and forget them from the dashboard. |
 | Tool orchestration | Capability routing, mid-run discovery, typed inputs, bounded context, duplicate-call caching, concurrent read batches, and ordered mutations. |
 | Approval inbox | Inspect exact arguments; approve or reject a proposal; repeated clicks cannot repeat execution. |
-| Activity | Run status, routing groups, tools, inputs, full recorded results, errors, and timing. |
+| Activity | Run status, routing, redacted tool inputs/results/errors, and a verified security journal. |
+| Permissions | Server-owned viewer/operator/approver/admin roles and tool allowlists in authenticated mode. |
+| Separate review | Signed exact proposals; a different principal must approve in authenticated mode; fresh revocation checks. |
+| Audit | Actor-attributed, redacted, append-only hash chain; authorization denials and action outcomes. |
 | iMessage | Opt-in read-only polling of new direct commands; allowlisted recipients; reviewed replies; authenticated bridge; deduplicated ingestion. |
 | Live MCP | Connect operator-configured Streamable HTTP MCP servers; discover and validate tools; require approval for remote mutations. |
 | Reproducible demo | 191 simulated tools across seven services, with no API key needed. |
@@ -131,6 +134,14 @@ Approval executes the stored arguments directly. It does not replay the model's 
 
 Read [architecture and tradeoffs](docs/ARCHITECTURE.md) for restart handling and implementation details.
 
+## Permissions, approval gates, redaction and audit
+
+**[The implementation map](docs/SECURITY.md#implementation-map)** points to each control and its regression tests. [The reviewer guide](docs/REVIEWER_GUIDE.md) gives a short operational task to inspect.
+
+The default demo is trusted local development. For enforced role separation, run `uv run python scripts/setup_auth.py`, copy the generated `security.env` values into `.env`, restart, and give the operator and reviewer their separate workspace tokens. Missing credentials are denied; operators can propose but cannot approve; even admins need a different approver for their own proposal. Tool scopes are enforced at dispatch and exact arguments are HMAC-checked at review.
+
+Credentials are removed from recorded tool events and model context; audit email/phone values are masked before persistence. Operational review payloads retain necessary recipients. SQLite triggers prevent ordinary audit edits; a hash chain detects retained-record modifications. An external checkpoint is needed to detect a complete database rewrite. Read [security boundaries and setup](docs/SECURITY.md) before using real connectors. This is a tested local application, not a certified production security platform.
+
 ## Development and verification
 
 ```bash
@@ -140,7 +151,9 @@ uv run pytest backend/tests -q
 # Product Python checks
 uv run ruff check backend/app.py backend/engine.py backend/store.py \
   backend/local_tools.py backend/connectors.py bridge/imessage.py \
-  scripts/example_mcp.py backend/tests/test_product.py
+  scripts/example_mcp.py backend/tests/test_product.py \
+  backend/security.py backend/redaction.py backend/audit.py \
+  backend/tests/test_security.py scripts/setup_auth.py
 
 # TypeScript + production bundle
 npm run build
@@ -153,7 +166,7 @@ npm test
 
 Verified for this release:
 
-- **121 Python tests passed**, six inherited live-provider tests skipped by default.
+- **139 Python tests passed**, including 18 authorization/redaction/audit contracts, six inherited live-provider tests skipped by default.
 - **Two Playwright walkthroughs passed**: end-to-end desktop interactions and mobile layout/navigation.
 - A live OpenAI Responses run read tasks and memory and returned a grounded answer.
 - A running MCP notes server was discovered and invoked through the real HTTP adapter.
@@ -166,7 +179,10 @@ GitHub Actions repeats the Python checks, production build, and browser walkthro
 ```text
 backend/app.py          Product API, jobs, approvals, bridge authentication
 backend/engine.py       Responses orchestration and common execution boundary
-backend/store.py        Transactional SQLite journal and persistent context
+backend/store.py        Persistent context and redacted execution events
+backend/security.py     Server-owned roles, capabilities and tool scopes
+backend/redaction.py    Recursive sensitive-field and credential/PII masking
+backend/audit.py        Append-only redacted hash-chained security journal
 backend/local_tools.py  Typed tasks, memory, and iMessage tools
 backend/connectors.py   Live MCP discovery, validation, and invocation
 backend/helpers/        Reused routing taxonomy, schemas, compaction, execution helpers
