@@ -46,3 +46,9 @@ Optionally start the example MCP notes server, configure it, and restart the app
 Show `backend/engine.py`: capability cards narrow the 191-tool fixture catalog before schemas, `find_tools` recovers missed capabilities, pure read batches overlap, and budgets prevent runaway loops. Show `backend/app.py`: durable jobs, approval compare-and-swap, and authenticated bridge routes. Show tests and CI.
 
 Close with the implementation boundaries: single-user loopback deployment, explicitly simulated built-in accounts, opt-in live MCP servers, real OpenAI orchestration when configured, and native iMessage validation dependent on Mac permissions. Avoid claiming an unrecorded video, unavailable live account connection, delivery confirmation, or guaranteed model correctness.
+
+## Recorded operational walkthrough
+
+[Watch the actual browser recording](media/operational-walkthrough.mp4) (about 66 seconds, captioned, no audio). It demonstrates authenticated operator/reviewer separation on the simulated Gmail-to-Slack workflow, including a denied approval and redacted audit evidence.
+
+To reproduce the recording after building the frontend and installing Playwright Chromium, install `ffmpeg` and run `node scripts/record_walkthrough.mjs`. The script starts an isolated authenticated demo server, generates temporary credentials, verifies UI outcomes, records browser interactions, and exports an MP4. It never reads personal Messages or connects to real services.

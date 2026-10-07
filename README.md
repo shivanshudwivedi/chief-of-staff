@@ -11,7 +11,7 @@ A local-first personal assistant that turns scattered context into clear priorit
 ![React](https://img.shields.io/badge/React-TypeScript-214c3e)
 ![Local first](https://img.shields.io/badge/Local-first-708967)
 
-**[Reviewer guide](docs/REVIEWER_GUIDE.md) · [Security implementation](docs/SECURITY.md) · [Quick start](#quick-start) · [Five-minute walkthrough](docs/WALKTHROUGH.md) · [iMessage](docs/IMESSAGE.md) · [Live connectors](docs/CONNECTORS.md) · [Architecture](docs/ARCHITECTURE.md)**
+**[Recorded walkthrough](docs/media/operational-walkthrough.mp4) · [Reviewer guide](docs/REVIEWER_GUIDE.md) · [Security implementation](docs/SECURITY.md) · [Quick start](#quick-start) · [Five-minute walkthrough](docs/WALKTHROUGH.md) · [iMessage](docs/IMESSAGE.md) · [Live connectors](docs/CONNECTORS.md) · [Architecture](docs/ARCHITECTURE.md)**
 
 ![Chief Of Staff desktop](docs/images/desk.png)
 
@@ -141,6 +141,8 @@ Read [architecture and tradeoffs](docs/ARCHITECTURE.md) for restart handling and
 The default demo is trusted local development. For enforced role separation, run `uv run python scripts/setup_auth.py`, copy the generated `security.env` values into `.env`, restart, and give the operator and reviewer their separate workspace tokens. Missing credentials are denied; operators can propose but cannot approve; even admins need a different approver for their own proposal. Tool scopes are enforced at dispatch and exact arguments are HMAC-checked at review.
 
 Credentials are removed from recorded tool events and model context; audit email/phone values are masked before persistence. Operational review payloads retain necessary recipients. SQLite triggers prevent ordinary audit edits; a hash chain detects retained-record modifications. An external checkpoint is needed to detect a complete database rewrite. Read [security boundaries and setup](docs/SECURITY.md) before using real connectors. This is a tested local application, not a certified production security platform.
+
+![Authenticated reviewer inspecting the redacted security journal](docs/images/security.png)
 
 ## Development and verification
 

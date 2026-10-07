@@ -95,6 +95,10 @@ def test_operator_proposes_reviewer_executes_exactly_once(secured):
     assert decide(client, "reviewer", proposal).status_code == 409
     audit = client.get("/api/audit", headers=headers("viewer")).json()
     assert audit["integrity"]["valid"]
+    assert any(
+        r["actor"] == "reviewer" and r["action"] == "approval.decision" and r["outcome"] == "approved"
+        for r in audit["records"]
+    )
     assert any(r["actor"] == "operator" and r["outcome"] == "denied" for r in audit["records"])
     assert any(
         r["actor"] == "reviewer" and r["action"] == "tool.complete" and r["outcome"] == "success"

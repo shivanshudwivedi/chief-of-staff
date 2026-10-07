@@ -299,7 +299,7 @@ def create_app(path=None):
                 "approval.decision",
                 aid,
                 "requested",
-                {"tool": rows[0]["name"]},
+                {"tool": rows[0]["name"], "approve": body.approve},
             )
             status = "executing" if body.approve else "rejected"
             if not store.execute(
@@ -315,8 +315,16 @@ def create_app(path=None):
                 )
                 store.execute(
                     "UPDATE approvals SET status=?,result=?,error=? WHERE id=?",
-                    ("failed" if error else "approved", json.dumps(result), error, aid),
+                    ("failed" if error else "approved", json.dumps(redact(result)), redact(error), aid),
                 )
+            final = store.query("SELECT status,error FROM approvals WHERE id=?", (aid,))[0]
+            engine.audit.append(
+                effective().id,
+                "approval.decision",
+                aid,
+                final["status"],
+                {"tool": row["name"], "error": final["error"]},
+            )
             remaining = store.query(
                 "SELECT id FROM approvals WHERE run_id=? AND status='pending'", (row["run_id"],)
             )
